@@ -18,7 +18,7 @@ from util import nearestPoint
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'OffensiveReflexAgent', second = 'DefensiveReflexAgent'):
+               first = 'OffensiveAlphaBetaAgent', second = 'DefensiveAlphaBetaAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -86,7 +86,7 @@ class DummyAgent(CaptureAgent):
 
     return random.choice(actions)
 
-class ReflexCaptureAgent(CaptureAgent):
+class AlphaBetaCaptureAgent(CaptureAgent):
   """
   A base class for reflex agents that chooses score-maximizing actions
   """
@@ -94,17 +94,56 @@ class ReflexCaptureAgent(CaptureAgent):
     """
     Picks among the actions with the highest Q(s,a).
     """
-    actions = gameState.getLegalActions(self.index)
+    def alphabeta(gameState, depth, alpha, beta, agentIndex, numAgents):
+      actions = gameState.getLegalActions(self.index)
+      if 'Stop' in actions:
+        actions.remove('Stop')
+      bestVal = (float("-Inf"), 'Stop')
+      for action in legalActions:
+        successorState = gameStateInner.generateSuccessor(agentIndex, action)
+        successorVal = (minFn(successorState, depth - 1, alpha, beta, agentIndex, numAgents), action)
+        bestVal = max(bestVal, successorVal)
+      return bestVal[1] 
 
-    # You can profile your evaluation time by uncommenting these lines
-    # start = time.time()
-    values = [self.evaluate(gameState, a) for a in actions]
-    # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
+    def minFn(gameState, depth, alpha, beta, agentIndex, numAgents):
+        if depth == 0 or gameStateInner.isWin() or gameStateInner.isLose():
+            return self.evaluationFunction(gameStateInner)
+        bestVal = float("Inf")
+        if agentIndex == 0:
+            legalActions = gameStateInner.getLegalActions(agentIndex)
+            if 'Stop' in legalActions:
+                legalActions.remove('Stop')
+            for action in legalActions:
+                state = gameStateInner.generateSuccessor(agentIndex, action)
+                val = maxFn(state, depth - 1, alpha, beta, agentIndex, numAgents)
+                bestVal = min(val, bestVal)
+                beta = min(beta, bestVal)
+                if beta <= alpha:
+                    return bestVal
+        else:
+            val = minFn(gameStateInner, depth, alpha, beta, agentIndex - 1, numAgents)
+            bestVal = val
+        return bestVal
 
-    maxValue = max(values)
-    bestActions = [a for a, v in zip(actions, values) if v == maxValue]
+    def maxFn(gameState, depth, alpha, beta, agentIndex, numAgents):
+        if depth == 0 or gameStateInner.isWin() or gameStateInner.isLose():
+            return self.evaluationFunction(gameStateInner)
+        bestVal = float("-Inf")
+        legalActions = gameStateInner.getLegalActions(agentIndex)
+        if 'Stop' in legalActions:
+            legalActions.remove('Stop')
+        for action in legalActions:
+            state = gameStateInner.generateSuccessor(agentIndex, action)
+            val = minFn(state, depth - 1, alpha, beta, numAgents, numAgents)
+            bestVal = max(val, bestVal)
+            alpha = max(alpha, bestVal)
+            if beta <= alpha:
+                return bestVal
+        return bestVal
 
-    return random.choice(bestActions)
+    return alphabeta(gameState, 10, float("-Inf"), float("Inf"), 0, gameState.getNumAgents()-1)
+
+    #util.raiseNotDefined()
 
   def getSuccessor(self, gameState, action):
     """
@@ -142,7 +181,7 @@ class ReflexCaptureAgent(CaptureAgent):
     """
     return {'successorScore': 1.0}
 
-class OffensiveReflexAgent(ReflexCaptureAgent):
+class OffensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
   """
   A reflex agent that seeks food. This is an agent
   we give you to get an idea of what an offensive agent might look like,
@@ -159,12 +198,16 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
       myPos = successor.getAgentState(self.index).getPosition()
       minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToFood'] = minDistance
+
+    ghostList = successor.getGhostPositions()
+    minGhostDist = min([self.getManhattanDistance((myPos, ghost) for ghost in ghostList)])
+    features['distanceToGhost'] = minGhostDist
     return features
 
   def getWeights(self, gameState, action):
-    return {'successorScore': 100, 'distanceToFood': -1}
+    return {'successorScore': 100, 'distanceToFood': -1, 'distanceToGhost': -100}
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+class DefensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
   """
   A reflex agent that keeps its side Pacman-free. Again,
   this is to give you an idea of what a defensive agent
