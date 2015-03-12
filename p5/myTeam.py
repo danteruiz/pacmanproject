@@ -10,8 +10,10 @@ from captureAgents import CaptureAgent
 import distanceCalculator
 import random, time, util
 from game import Directions
+from game import Actions
 import game
 from util import nearestPoint
+from util import manhattanDistance
 
 #################
 # Team creation #
@@ -77,6 +79,8 @@ class DefensiveAgent(CaptureAgent):
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
     self.initializeUniformly(gameState)
     self.firstMove = True
+    self.prob_attack = 0.8
+    self.prob_scaredFlee = 0.8
 
 
 
@@ -87,7 +91,7 @@ class DefensiveAgent(CaptureAgent):
     You must first place the ghost in the gameState, using setGhostPosition below.
     """
     ghostPosition = gameState.getAgentState(self.index-1).getPosition() # The position you set
-    actionDist = self.ghostAgent.getDistribution(gameState)
+    actionDist = self.getDistribution(gameState)
     dist = util.Counter()
     for action, prob in actionDist.items():
       successorPosition = game.Actions.getSuccessor(ghostPosition, action)
@@ -123,8 +127,8 @@ class DefensiveAgent(CaptureAgent):
     """
     Picks among actions randomly.
     """
-    #if not self.firstMove: self.elapseTime(gameState)
-    #self.firstMove = False
+    if not self.firstMove: self.elapseTime(gameState)
+    self.firstMove = False
     self.observeState(gameState)
     array = []
     array.append(self.beliefs)
@@ -185,7 +189,7 @@ class DefensiveAgent(CaptureAgent):
 
     actionVectors = [Actions.directionToVector( a, speed ) for a in legalActions]
     newPositions = [( pos[0]+a[0], pos[1]+a[1] ) for a in actionVectors]
-    pacmanPosition = state.getPacmanPosition()
+    pacmanPosition = state.getAgentState(self.index).getPosition()
 
     # Select best actions given the state
     distancesToPacman = [manhattanDistance( pos, pacmanPosition ) for pos in newPositions]
