@@ -18,7 +18,7 @@ from util import nearestPoint
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'OffensiveAlphaBetaAgent', second = 'DefensiveAlphaBetaAgent'):
+               first = 'OffensiveReflexAgent', second = 'DefensiveAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -35,13 +35,14 @@ def createTeam(firstIndex, secondIndex, isRed,
   """
 
   # The following line is an example only; feel free to change it.
+
   return [eval(first)(firstIndex), eval(second)(secondIndex)]
 
 ##########
 # Agents #
 ##########
 
-class DummyAgent(CaptureAgent):
+class DefensiveAgent(CaptureAgent):
   """
   A Dummy agent to serve as an example of the necessary agent structure.
   You should look at baselineTeam.py for more details about how to
@@ -52,8 +53,8 @@ class DummyAgent(CaptureAgent):
     """
     This method handles the initial setup of the
     agent to populate useful fields (such as what team
-    we're on). 
-    
+    we're on).
+
     A distanceCalculator instance caches the maze distances
     between each pair of positions, so your agents can use:
     self.distancer.getDistance(p1, p2)
@@ -61,32 +62,159 @@ class DummyAgent(CaptureAgent):
     IMPORTANT: This method may run for at most 15 seconds.
     """
 
-    ''' 
+    '''
     Make sure you do not delete the following line. If you would like to
     use Manhattan distances instead of maze distances in order to save
     on initialization time, please take a look at
-    CaptureAgent.registerInitialState in captureAgents.py. 
+    CaptureAgent.registerInitialState in captureAgents.py.
     '''
     CaptureAgent.registerInitialState(self, gameState)
+    print self.index
 
-    ''' 
+    '''
     Your initialization code goes here, if you need any.
     '''
+    self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
+    self.initializeUniformly(gameState)
+    self.firstMove = True
+
+
+
+  def getPositionDistribution(self, gameState):
+    """
+    Returns a distribution over successor positions of the ghost from the given gameState.
+
+    You must first place the ghost in the gameState, using setGhostPosition below.
+    """
+    ghostPosition = gameState.getAgentState(self.index-1).getPosition() # The position you set
+    actionDist = self.ghostAgent.getDistribution(gameState)
+    dist = util.Counter()
+    for action, prob in actionDist.items():
+      successorPosition = game.Actions.getSuccessor(ghostPosition, action)
+      dist[successorPosition] = prob
+    return dist
+
+  def setGhostPosition(self, gameState, ghostPosition):
+    """
+    Sets the position of the ghost for this inference module to the specified
+    position in the supplied gameState.
+    """
+    conf = game.Configuration(ghostPosition, game.Directions.STOP)
+    gameState.data.agentStates[self.index-1] = game.AgentState(conf, False)
+    return gameState
+
+
+
+  def observeState(self, gameState):
+    distances = gameState.getAgentDistances()
+    if len(distances) >= self.index: # Check for missing observations
+      obs = distances[self.index - 1]
+      self.observe(obs, gameState)
+
+
+  def initializeUniformly(self, gameState):
+    "Begin with a uniform distribution over ghost positions."
+    self.beliefs = util.Counter()
+    for p in self.legalPositions: self.beliefs[p] = 1.0
+    self.beliefs.normalize()
 
 
   def chooseAction(self, gameState):
     """
     Picks among actions randomly.
     """
+    #if not self.firstMove: self.elapseTime(gameState)
+    #self.firstMove = False
+    self.observeState(gameState)
+    array = []
+    array.append(self.beliefs)
+    self.displayDistributionsOverPositions(array)
     actions = gameState.getLegalActions(self.index)
 
-    ''' 
+    '''
     You should change this in your own agent.
     '''
 
     return random.choice(actions)
 
-class AlphaBetaCaptureAgent(CaptureAgent):
+
+
+  def observe(self, observation, gameState):
+    noisyDistance = observation
+    emissionModel = getObservationDistribution(noisyDistance)
+    pacmanPosition = gameState.getAgentState(self.index).getPosition()
+
+    # Replace this code with a correct observation update
+    allPossible = util.Counter()
+    for p in self.legalPositions:
+      trueDistance = util.manhattanDistance(p, pacmanPosition)
+      if emissionModel[trueDistance] > 0: allPossible[p] = emissionModel[trueDistance] * self.beliefs[p]
+    allPossible.normalize()
+
+    self.beliefs = allPossible
+
+
+
+
+  def elapseTime(self, gameState):
+    counter = util.Counter()
+
+    for p in self.legalPositions:
+         newPosDist = self.getPositionDistribution(self.setGhostPosition(gameState, p))
+
+         for nextPos in newPosDist:
+             counter[nextPos] += newPosDist[nextPos] * self.beliefs[p]
+
+
+
+    self.beliefs = counter
+
+  def getBeliefDistribution(self):
+    return self.beliefs
+
+
+  def getDistribution( self, state ):
+    # Read variables from state
+    ghostState = state.getAgentState( self.index -1 )
+    legalActions = state.getLegalActions( self.index -1 )
+    pos = ghostState.getPosition();
+    isScared = ghostState.scaredTimer > 0
+
+    speed = 1
+    if isScared: speed = 0.5
+
+    actionVectors = [Actions.directionToVector( a, speed ) for a in legalActions]
+    newPositions = [( pos[0]+a[0], pos[1]+a[1] ) for a in actionVectors]
+    pacmanPosition = state.getPacmanPosition()
+
+    # Select best actions given the state
+    distancesToPacman = [manhattanDistance( pos, pacmanPosition ) for pos in newPositions]
+    if isScared:
+      bestScore = max( distancesToPacman )
+      bestProb = self.prob_scaredFlee
+    else:
+      bestScore = min( distancesToPacman )
+      bestProb = self.prob_attack
+    bestActions = [action for action, distance in zip( legalActions, distancesToPacman ) if distance == bestScore]
+
+    # Construct distribution
+    dist = util.Counter()
+    for a in bestActions: dist[a] = bestProb / len(bestActions)
+    for a in legalActions: dist[a] += ( 1-bestProb ) / len(legalActions)
+    dist.normalize()
+    return dist
+
+
+
+
+
+
+
+
+
+
+
+class ReflexCaptureAgent(CaptureAgent):
   """
   A base class for reflex agents that chooses score-maximizing actions
   """
@@ -94,56 +222,17 @@ class AlphaBetaCaptureAgent(CaptureAgent):
     """
     Picks among the actions with the highest Q(s,a).
     """
-    def alphabeta(gameState, depth, alpha, beta, agentIndex, numAgents):
-      actions = gameState.getLegalActions(self.index)
-      if 'Stop' in actions:
-        actions.remove('Stop')
-      bestVal = (float("-Inf"), 'Stop')
-      for action in legalActions:
-        successorState = gameStateInner.generateSuccessor(agentIndex, action)
-        successorVal = (minFn(successorState, depth - 1, alpha, beta, agentIndex, numAgents), action)
-        bestVal = max(bestVal, successorVal)
-      return bestVal[1] 
+    actions = gameState.getLegalActions(self.index)
 
-    def minFn(gameState, depth, alpha, beta, agentIndex, numAgents):
-        if depth == 0 or gameStateInner.isWin() or gameStateInner.isLose():
-            return self.evaluationFunction(gameStateInner)
-        bestVal = float("Inf")
-        if agentIndex == 0:
-            legalActions = gameStateInner.getLegalActions(agentIndex)
-            if 'Stop' in legalActions:
-                legalActions.remove('Stop')
-            for action in legalActions:
-                state = gameStateInner.generateSuccessor(agentIndex, action)
-                val = maxFn(state, depth - 1, alpha, beta, agentIndex, numAgents)
-                bestVal = min(val, bestVal)
-                beta = min(beta, bestVal)
-                if beta <= alpha:
-                    return bestVal
-        else:
-            val = minFn(gameStateInner, depth, alpha, beta, agentIndex - 1, numAgents)
-            bestVal = val
-        return bestVal
+    # You can profile your evaluation time by uncommenting these lines
+    # start = time.time()
+    values = [self.evaluate(gameState, a) for a in actions]
+    # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
 
-    def maxFn(gameState, depth, alpha, beta, agentIndex, numAgents):
-        if depth == 0 or gameStateInner.isWin() or gameStateInner.isLose():
-            return self.evaluationFunction(gameStateInner)
-        bestVal = float("-Inf")
-        legalActions = gameStateInner.getLegalActions(agentIndex)
-        if 'Stop' in legalActions:
-            legalActions.remove('Stop')
-        for action in legalActions:
-            state = gameStateInner.generateSuccessor(agentIndex, action)
-            val = minFn(state, depth - 1, alpha, beta, numAgents, numAgents)
-            bestVal = max(val, bestVal)
-            alpha = max(alpha, bestVal)
-            if beta <= alpha:
-                return bestVal
-        return bestVal
+    maxValue = max(values)
+    bestActions = [a for a, v in zip(actions, values) if v == maxValue]
 
-    return alphabeta(gameState, 10, float("-Inf"), float("Inf"), 0, gameState.getNumAgents()-1)
-
-    #util.raiseNotDefined()
+    return random.choice(bestActions)
 
   def getSuccessor(self, gameState, action):
     """
@@ -181,7 +270,7 @@ class AlphaBetaCaptureAgent(CaptureAgent):
     """
     return {'successorScore': 1.0}
 
-class OffensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
+class OffensiveReflexAgent(ReflexCaptureAgent):
   """
   A reflex agent that seeks food. This is an agent
   we give you to get an idea of what an offensive agent might look like,
@@ -198,16 +287,12 @@ class OffensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
       myPos = successor.getAgentState(self.index).getPosition()
       minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
       features['distanceToFood'] = minDistance
-
-    ghostList = successor.getGhostPositions()
-    minGhostDist = min([self.getManhattanDistance((myPos, ghost) for ghost in ghostList)])
-    features['distanceToGhost'] = minGhostDist
     return features
 
   def getWeights(self, gameState, action):
-    return {'successorScore': 100, 'distanceToFood': -1, 'distanceToGhost': -100}
+    return {'successorScore': 100, 'distanceToFood': -1}
 
-class DefensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
+class DefensiveReflexAgent(ReflexCaptureAgent):
   """
   A reflex agent that keeps its side Pacman-free. Again,
   this is to give you an idea of what a defensive agent
@@ -242,3 +327,28 @@ class DefensiveAlphaBetaAgent(AlphaBetaCaptureAgent):
 
   def getWeights(self, gameState, action):
     return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+
+
+
+
+
+
+SONAR_NOISE_RANGE = 15 # Must be odd
+SONAR_MAX = (SONAR_NOISE_RANGE - 1)/2
+SONAR_NOISE_VALUES = [i - SONAR_MAX for i in range(SONAR_NOISE_RANGE)]
+SONAR_DENOMINATOR = 2 ** SONAR_MAX  + 2 ** (SONAR_MAX + 1) - 2.0
+SONAR_NOISE_PROBS = [2 ** (SONAR_MAX-abs(v)) / SONAR_DENOMINATOR  for v in SONAR_NOISE_VALUES]
+
+observationDistributions = {}
+def getObservationDistribution(noisyDistance):
+  """
+  Returns the factor P( noisyDistance | TrueDistances ), the likelihood of the provided noisyDistance
+  conditioned upon all the possible true distances that could have generated it.
+  """
+  global observationDistributions
+  if noisyDistance not in observationDistributions:
+    distribution = util.Counter()
+    for error , prob in zip(SONAR_NOISE_VALUES, SONAR_NOISE_PROBS):
+      distribution[max(1, noisyDistance - error)] += prob
+    observationDistributions[noisyDistance] = distribution
+  return observationDistributions[noisyDistance]
