@@ -71,16 +71,21 @@ class DefensiveAgent(CaptureAgent):
     CaptureAgent.registerInitialState in captureAgents.py.
     '''
     CaptureAgent.registerInitialState(self, gameState)
-    print self.index
 
     '''
     Your initialization code goes here, if you need any.
     '''
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
     self.initializeUniformly(gameState)
+
     self.firstMove = True
     self.prob_attack = 0.8
     self.prob_scaredFlee = 0.8
+    self.index_ = None
+
+
+
+
 
 
 
@@ -90,7 +95,7 @@ class DefensiveAgent(CaptureAgent):
 
     You must first place the ghost in the gameState, using setGhostPosition below.
     """
-    ghostPosition = gameState.getAgentState(self.index-1).getPosition() # The position you set
+    ghostPosition = gameState.getAgentState(self.index_).getPosition() # The position you set
     actionDist = self.getDistribution(gameState)
     dist = util.Counter()
     for action, prob in actionDist.items():
@@ -104,46 +109,59 @@ class DefensiveAgent(CaptureAgent):
     position in the supplied gameState.
     """
     conf = game.Configuration(ghostPosition, game.Directions.STOP)
-    gameState.data.agentStates[self.index-1] = game.AgentState(conf, False)
+    gameState.data.agentStates[self.index_] = game.AgentState(conf, False)
     return gameState
 
 
 
   def observeState(self, gameState):
     distances = gameState.getAgentDistances()
-    if len(distances) >= self.index: # Check for missing observations
-      obs = distances[self.index - 1]
-      self.observe(obs, gameState)
+    #if len(distances) >= self.index: # Check for missing observations
+    obs = distances[ self.index_ ]
+    self.observe(obs, gameState)
 
 
   def initializeUniformly(self, gameState):
     "Begin with a uniform distribution over ghost positions."
-    self.beliefs = util.Counter()
-    for p in self.legalPositions: self.beliefs[p] = 1.0
-    self.beliefs.normalize()
+    self.opponents_beliefs = {}
+    for index in self.getOpponents(gameState):
+      print "Index: ", index
+      beliefs = util.Counter()
+      for p in self.legalPositions:
+        beliefs[p] = 1.0
+        beliefs.normalize()
+      self.opponents_beliefs[index] = beliefs
+
 
 
   def chooseAction(self, gameState):
     """
     Picks among actions randomly.
     """
-    if not self.firstMove: self.elapseTime(gameState)
-    self.firstMove = False
-    self.observeState(gameState)
-    array = []
-    array.append(self.beliefs)
-    self.displayDistributionsOverPositions(array)
+    for index in self.getOpponents(gameState):
+      print 'this is the index', index
+      if not self.firstMove: self.elapseTime(gameState)
+      self.firstMove = False
+      self.index_ = index
+      self.observeState(gameState)
+    opponents_beliefs_list = self.opponents_beliefs.items()
+    opponents_beliefs_vals_only = []
+    for agentIndex, beliefVal in opponents_beliefs_list:
+      opponents_beliefs_vals_only.append(beliefVal)
+    self.displayDistributionsOverPositions(opponents_beliefs_vals_only)
+
+    '''
+     we need to change this next two lines
+
+    '''
+
     actions = gameState.getLegalActions(self.index)
-
-    '''
-    You should change this in your own agent.
-    '''
-
     return random.choice(actions)
 
 
 
   def observe(self, observation, gameState):
+    current = self.opponents_beliefs[self.index_]
     noisyDistance = observation
     emissionModel = getObservationDistribution(noisyDistance)
     pacmanPosition = gameState.getAgentState(self.index).getPosition()
@@ -152,35 +170,36 @@ class DefensiveAgent(CaptureAgent):
     allPossible = util.Counter()
     for p in self.legalPositions:
       trueDistance = util.manhattanDistance(p, pacmanPosition)
-      if emissionModel[trueDistance] > 0: allPossible[p] = emissionModel[trueDistance] * self.beliefs[p]
+      if emissionModel[trueDistance] > 0: allPossible[p] = emissionModel[trueDistance] * current[p]
     allPossible.normalize()
 
-    self.beliefs = allPossible
+    self.opponents_beliefs[self.index_] = allPossible
 
 
 
 
   def elapseTime(self, gameState):
+    current = self.opponents_beliefs[self.index_]
     counter = util.Counter()
 
     for p in self.legalPositions:
          newPosDist = self.getPositionDistribution(self.setGhostPosition(gameState, p))
 
          for nextPos in newPosDist:
-             counter[nextPos] += newPosDist[nextPos] * self.beliefs[p]
+             counter[nextPos] += newPosDist[nextPos] * current[p]
 
 
 
-    self.beliefs = counter
+    self.opponents_beliefs[self.index_] = counter
 
   def getBeliefDistribution(self):
-    return self.beliefs
+    return self.opponents_beliefs[self.index_]
 
 
   def getDistribution( self, state ):
     # Read variables from state
-    ghostState = state.getAgentState( self.index -1 )
-    legalActions = state.getLegalActions( self.index -1 )
+    ghostState = state.getAgentState(self.index_ )
+    legalActions = state.getLegalActions( self.index_)
     pos = ghostState.getPosition();
     isScared = ghostState.scaredTimer > 0
 
@@ -334,6 +353,87 @@ class DefensiveReflexAgent(ReflexCaptureAgent):
 
 
 
+
+
+
+
+
+
+
+
+def chooseAction(self, gameState):
+    """
+    First computes the most likely position of each ghost that
+    has not yet been captured, then chooses an action that brings
+    Pacman closer to the closest ghost (in maze distance!).
+
+    To find the maze distance between any two positions, use:
+    self.distancer.getDistance(pos1, pos2)
+
+    To find the successor position of a position after an action:
+    successorPosition = Actions.getSuccessor(position, action)
+
+    livingGhostPositionDistributions, defined below, is a list of
+    util.Counter objects equal to the position belief distributions
+    for each of the ghosts that are still alive.  It is defined based
+    on (these are implementation details about which you need not be
+    concerned):
+
+      1) gameState.getLivingGhosts(), a list of booleans, one for each
+         agent, indicating whether or not the agent is alive.  Note
+         that pacman is always agent 0, so the ghosts are agents 1,
+         onwards (just as before).
+
+      2) self.ghostBeliefs, the list of belief distributions for each
+         of the ghosts (including ghosts that are not alive).  The
+         indices into this list should be 1 less than indices into the
+         gameState.getLivingGhosts() list.
+
+    You may remove Directions.STOP from the list of available actions.
+    """
+    pacmanPosition = gameState.getPacmanPosition()
+    legal = [a for a in gameState.getLegalPacmanActions() if a != Directions.STOP]
+    livingGhosts = gameState.getLivingGhosts()
+    livingGhostPositionDistributions = [beliefs for i,beliefs
+                                        in enumerate(self.ghostBeliefs)
+                                        if livingGhosts[i+1]]
+    possible_location = []
+    max_prob = -2
+    location = (0,0)
+
+    for dict in livingGhostPositionDistributions:
+        for position in dict:
+            prob = dict[position]
+
+            if prob > max_prob:
+                max_prob = prob
+                location = position
+
+        possible_location.append(location)
+
+
+    max_distance = 100000
+    max_position = None
+
+    for i in possible_location:
+        dist = self.distancer.getDistance(pacmanPosition, i)
+
+        if dist < max_distance:
+            max_distance = dist
+            max_position = i
+
+    closest = 1000000
+    best_action = None
+    for action in legal:
+        successorPosition = Actions.getSuccessor(pacmanPosition, action)
+
+        dist = self.distancer.getDistance(successorPosition, max_position)
+
+        if dist < closest:
+            closest = dist
+            best_action = action
+
+    return best_action
 
 
 
