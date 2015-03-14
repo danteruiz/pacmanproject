@@ -170,21 +170,58 @@ class InferenceReflexAgent(CaptureAgent):
 
 
 #Offensive Agent
-class OffInfRefAgent(InferenceReflexAgent):
+class OffInfRefAgent(CaptureAgent):
+
+  def chooseAction(self, gameState):
+    """
+    Picks among the actions with the highest Q(s,a).
+    """
+    actions = gameState.getLegalActions(self.index)
+
+    # You can profile your evaluation time by uncommenting these lines
+    # start = time.time()
+    values = [self.evaluate(gameState, a) for a in actions]
+    # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
+
+    maxValue = max(values)
+    bestActions = [a for a, v in zip(actions, values) if v == maxValue]
+
+    return random.choice(bestActions)
+
+  def getSuccessor(self, gameState, action):
+    """
+    Finds the next successor which is a grid position (location tuple).
+    """
+    successor = gameState.generateSuccessor(self.index, action)
+    pos = successor.getAgentState(self.index).getPosition()
+    if pos != nearestPoint(pos):
+      # Only half a grid position was covered
+      return successor.generateSuccessor(self.index, action)
+    else:
+      return successor
+
+  def evaluate(self, gameState, action):
+    """
+    Computes a linear combination of features and feature weights
+    """
+    features = self.getFeatures(gameState, action)
+    weights = self.getWeights(gameState, action)
+    return features * weights
   
   def getFeatures(self, gameState, action):
     features = util.Counter()
     successor = self.getSuccessor(gameState, action)
     features['successorScore'] = self.getScore(successor)
-    features['ghostDist'] = 0
+    features['enemyDistance'] = 0
+    features['reverse'] = 0
 
-    mostLikelyPositions = []
-    for index in self.opponents_beliefs:
-      candidates = []
-      for position, prob in self.opponents_beliefs[index].items():
-        candidates.append((prob, position))
-      maxCandidate = max(candidates)
-      mostLikelyPositions.append(maxCandidate[1])
+    #mostLikelyPositions = []
+    #for index in self.opponents_beliefs:
+    #  candidates = []
+    #  for position, prob in self.opponents_beliefs[index].items():
+    #    candidates.append((prob, position))
+    #  maxCandidate = max(candidates)
+    #  mostLikelyPositions.append(maxCandidate[1])
     #print "Most likely positions for enemies: ", mostLikelyPositions
 
     #print "distance between my offense and their defense: ", self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
@@ -192,20 +229,49 @@ class OffInfRefAgent(InferenceReflexAgent):
 
     #if self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 5:
       #print "Too Close!"
-    features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
-    if self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 10:
-      features['ghostDist'] = -(self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]))
+    #features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
+    #if manhattanDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 3:
+    #  features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
 
     # Compute distance to the nearest food
-    foodList = self.getFood(successor).asList()
-    if len(foodList) > 0: # This should always be True,  but better safe than sorry
-      myPos = successor.getAgentState(self.index).getPosition()
-      minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
-      features['distanceToFood'] = minDistance
+
+    if self.red:
+      enemies = gameState.getBlueTeamIndices()
+    else:
+      enemies = gameState.getRedTeamIndices()
+    #print enemies
+
+
+    myPosition = successor.getAgentState(self.index).getPosition()
+
+    if successor.getAgentPosition(enemies[1]):
+      defensePosition = successor.getAgentPosition(enemies[1])
+      enemyDefenseAgentDist = manhattanDistance(myPosition, defensePosition)
+    else:
+      enemyDefenseAgentDist = successor.getAgentDistances()[enemies[1]]
+    print enemyDefenseAgentDist
+    if enemyDefenseAgentDist <= 3:
+      print "Too close!"
+      if successor.getAgentState(enemies[1]).scaredTimer > 0:
+        features['enemyDistance'] = -(enemyDefenseAgentDist)
+      else:
+        features['enemyDistance'] = enemyDefenseAgentDist
+        features['distanceToFood'] -= 1
+        rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
+        if action == rev: features['reverse'] = 1
+    else:
+      foodList = self.getFood(successor).asList()
+      if len(foodList) > 0: # This should always be True,  but better safe than sorry
+        myPos = successor.getAgentState(self.index).getPosition()
+        minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
+        features['distanceToFood'] = minDistance
+
+    
+
     return features
 
   def getWeights(self, gameState, action):
-    return {'successorScore': 100, 'distanceToFood': -1, 'ghostDist': -1}
+    return {'successorScore': 100, 'distanceToFood': -1, 'enemyDistance': 10, 'reverse': -2}
 
 class DefInfRefAgent(InferenceReflexAgent):
   """
@@ -227,16 +293,30 @@ class DefInfRefAgent(InferenceReflexAgent):
     features['onDefense'] = 1
     if myState.isPacman: features['onDefense'] = 0
 
-    mostLikelyPositions = []
-    for index in self.opponents_beliefs:
-      candidates = []
-      for position, prob in self.opponents_beliefs[index].items():
-        candidates.append((prob, position))
-      maxCandidate = max(candidates)
-      mostLikelyPositions.append(maxCandidate[1])
+    enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
+    invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
+    features['numInvaders'] = len(invaders)
+    if len(invaders) > 0:
+      
 
-    features['invaderDistance'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[0])
+      if self.red:
+        enemies = gameState.getBlueTeamIndices()
+      else:
+        enemies = gameState.getRedTeamIndices()
+      #print enemies
 
+
+      myPosition = successor.getAgentState(self.index).getPosition()
+
+      if successor.getAgentPosition(enemies[0]):
+        defensePosition = successor.getAgentPosition(enemies[0])
+        enemyDefenseAgentDist = manhattanDistance(myPosition, defensePosition)
+      else:
+        enemyDefenseAgentDist = successor.getAgentDistances()[enemies[0]]
+      print enemyDefenseAgentDist
+      if enemyDefenseAgentDist <= 4:
+        print "Too close!"
+        features['invaderDistance'] = enemyDefenseAgentDist
 
     if action == Directions.STOP: features['stop'] = 1
     rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
@@ -250,86 +330,6 @@ class DefInfRefAgent(InferenceReflexAgent):
 
 
 
-
-
-
-
-
-
-
-def chooseAction(self, gameState):
-    """
-    First computes the most likely position of each ghost that
-    has not yet been captured, then chooses an action that brings
-    Pacman closer to the closest ghost (in maze distance!).
-
-    To find the maze distance between any two positions, use:
-    self.distancer.getDistance(pos1, pos2)
-
-    To find the successor position of a position after an action:
-    successorPosition = Actions.getSuccessor(position, action)
-
-    livingGhostPositionDistributions, defined below, is a list of
-    util.Counter objects equal to the position belief distributions
-    for each of the ghosts that are still alive.  It is defined based
-    on (these are implementation details about which you need not be
-    concerned):
-
-      1) gameState.getLivingGhosts(), a list of booleans, one for each
-         agent, indicating whether or not the agent is alive.  Note
-         that pacman is always agent 0, so the ghosts are agents 1,
-         onwards (just as before).
-
-      2) self.ghostBeliefs, the list of belief distributions for each
-         of the ghosts (including ghosts that are not alive).  The
-         indices into this list should be 1 less than indices into the
-         gameState.getLivingGhosts() list.
-
-    You may remove Directions.STOP from the list of available actions.
-    """
-    pacmanPosition = gameState.getPacmanPosition()
-    legal = [a for a in gameState.getLegalPacmanActions() if a != Directions.STOP]
-    livingGhosts = gameState.getLivingGhosts()
-    livingGhostPositionDistributions = [beliefs for i,beliefs
-                                        in enumerate(self.ghostBeliefs)
-                                        if livingGhosts[i+1]]
-    possible_location = []
-    max_prob = -2
-    location = (0,0)
-
-    for dict in livingGhostPositionDistributions:
-        for position in dict:
-            prob = dict[position]
-
-            if prob > max_prob:
-                max_prob = prob
-                location = position
-
-        possible_location.append(location)
-
-
-    max_distance = 100000
-    max_position = None
-
-    for i in possible_location:
-        dist = self.distancer.getDistance(pacmanPosition, i)
-
-        if dist < max_distance:
-            max_distance = dist
-            max_position = i
-
-    closest = 1000000
-    best_action = None
-    for action in legal:
-        successorPosition = Actions.getSuccessor(pacmanPosition, action)
-
-        dist = self.distancer.getDistance(successorPosition, max_position)
-
-        if dist < closest:
-            closest = dist
-            best_action = action
-
-    return best_action
 
 
 
