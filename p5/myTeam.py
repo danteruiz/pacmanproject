@@ -20,7 +20,7 @@ from util import manhattanDistance
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'OffensiveReflexAgent', second = 'DefensiveAgent'):
+               first = 'OffInfRefAgent', second = 'DefInfRefAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -44,57 +44,18 @@ def createTeam(firstIndex, secondIndex, isRed,
 # Agents #
 ##########
 
-class DefensiveAgent(CaptureAgent):
-  """
-  A Dummy agent to serve as an example of the necessary agent structure.
-  You should look at baselineTeam.py for more details about how to
-  create an agent as this is the bare minimum.
-  """
+class InferenceReflexAgent(CaptureAgent):
 
   def registerInitialState(self, gameState):
-    """
-    This method handles the initial setup of the
-    agent to populate useful fields (such as what team
-    we're on).
-
-    A distanceCalculator instance caches the maze distances
-    between each pair of positions, so your agents can use:
-    self.distancer.getDistance(p1, p2)
-
-    IMPORTANT: This method may run for at most 15 seconds.
-    """
-
-    '''
-    Make sure you do not delete the following line. If you would like to
-    use Manhattan distances instead of maze distances in order to save
-    on initialization time, please take a look at
-    CaptureAgent.registerInitialState in captureAgents.py.
-    '''
     CaptureAgent.registerInitialState(self, gameState)
-
-    '''
-    Your initialization code goes here, if you need any.
-    '''
     self.legalPositions = [p for p in gameState.getWalls().asList(False) if p[1] > 1]
     self.initializeUniformly(gameState)
-
     self.firstMove = True
     self.prob_attack = 0.8
     self.prob_scaredFlee = 0.8
     self.index_ = None
 
-
-
-
-
-
-
   def getPositionDistribution(self, gameState):
-    """
-    Returns a distribution over successor positions of the ghost from the given gameState.
-
-    You must first place the ghost in the gameState, using setGhostPosition below.
-    """
     ghostPosition = gameState.getAgentState(self.index_).getPosition() # The position you set
     actionDist = self.getDistribution(gameState)
     dist = util.Counter()
@@ -104,25 +65,16 @@ class DefensiveAgent(CaptureAgent):
     return dist
 
   def setGhostPosition(self, gameState, ghostPosition):
-    """
-    Sets the position of the ghost for this inference module to the specified
-    position in the supplied gameState.
-    """
     conf = game.Configuration(ghostPosition, game.Directions.STOP)
     gameState.data.agentStates[self.index_] = game.AgentState(conf, False)
     return gameState
 
-
-
   def observeState(self, gameState):
     distances = gameState.getAgentDistances()
-    #if len(distances) >= self.index: # Check for missing observations
     obs = distances[ self.index_ ]
     self.observe(obs, gameState)
 
-
   def initializeUniformly(self, gameState):
-    "Begin with a uniform distribution over ghost positions."
     self.opponents_beliefs = {}
     for index in self.getOpponents(gameState):
       print "Index: ", index
@@ -132,12 +84,7 @@ class DefensiveAgent(CaptureAgent):
         beliefs.normalize()
       self.opponents_beliefs[index] = beliefs
 
-
-
   def chooseAction(self, gameState):
-    """
-    Picks among actions randomly.
-    """
     for index in self.getOpponents(gameState):
       print 'this is the index', index
       if not self.firstMove: self.elapseTime(gameState)
@@ -149,68 +96,46 @@ class DefensiveAgent(CaptureAgent):
     for agentIndex, beliefVal in opponents_beliefs_list:
       opponents_beliefs_vals_only.append(beliefVal)
     self.displayDistributionsOverPositions(opponents_beliefs_vals_only)
-
-    '''
-     we need to change this next two lines
-
-    '''
-
     actions = gameState.getLegalActions(self.index)
-    return random.choice(actions)
-
-
+    values = [self.evaluate(gameState, a) for a in actions]
+    maxValue = max(values)
+    bestActions = [a for a, v in zip(actions, values) if v == maxValue]
+    return random.choice(bestActions)
 
   def observe(self, observation, gameState):
     current = self.opponents_beliefs[self.index_]
     noisyDistance = observation
     emissionModel = getObservationDistribution(noisyDistance)
     pacmanPosition = gameState.getAgentState(self.index).getPosition()
-
-    # Replace this code with a correct observation update
     allPossible = util.Counter()
     for p in self.legalPositions:
       trueDistance = util.manhattanDistance(p, pacmanPosition)
       if emissionModel[trueDistance] > 0: allPossible[p] = emissionModel[trueDistance] * current[p]
     allPossible.normalize()
-
     self.opponents_beliefs[self.index_] = allPossible
-
-
-
 
   def elapseTime(self, gameState):
     current = self.opponents_beliefs[self.index_]
     counter = util.Counter()
-
     for p in self.legalPositions:
          newPosDist = self.getPositionDistribution(self.setGhostPosition(gameState, p))
-
          for nextPos in newPosDist:
              counter[nextPos] += newPosDist[nextPos] * current[p]
-
-
-
     self.opponents_beliefs[self.index_] = counter
 
   def getBeliefDistribution(self):
     return self.opponents_beliefs[self.index_]
 
-
   def getDistribution( self, state ):
-    # Read variables from state
     ghostState = state.getAgentState(self.index_ )
     legalActions = state.getLegalActions( self.index_)
     pos = ghostState.getPosition();
     isScared = ghostState.scaredTimer > 0
-
     speed = 1
     if isScared: speed = 0.5
-
     actionVectors = [Actions.directionToVector( a, speed ) for a in legalActions]
     newPositions = [( pos[0]+a[0], pos[1]+a[1] ) for a in actionVectors]
     pacmanPosition = state.getAgentState(self.index).getPosition()
-
-    # Select best actions given the state
     distancesToPacman = [manhattanDistance( pos, pacmanPosition ) for pos in newPositions]
     if isScared:
       bestScore = max( distancesToPacman )
@@ -219,43 +144,11 @@ class DefensiveAgent(CaptureAgent):
       bestScore = min( distancesToPacman )
       bestProb = self.prob_attack
     bestActions = [action for action, distance in zip( legalActions, distancesToPacman ) if distance == bestScore]
-
-    # Construct distribution
     dist = util.Counter()
     for a in bestActions: dist[a] = bestProb / len(bestActions)
     for a in legalActions: dist[a] += ( 1-bestProb ) / len(legalActions)
     dist.normalize()
     return dist
-
-
-
-
-
-
-
-
-
-
-
-class ReflexCaptureAgent(CaptureAgent):
-  """
-  A base class for reflex agents that chooses score-maximizing actions
-  """
-  def chooseAction(self, gameState):
-    """
-    Picks among the actions with the highest Q(s,a).
-    """
-    actions = gameState.getLegalActions(self.index)
-
-    # You can profile your evaluation time by uncommenting these lines
-    # start = time.time()
-    values = [self.evaluate(gameState, a) for a in actions]
-    # print 'eval time for agent %d: %.4f' % (self.index, time.time() - start)
-
-    maxValue = max(values)
-    bestActions = [a for a, v in zip(actions, values) if v == maxValue]
-
-    return random.choice(bestActions)
 
   def getSuccessor(self, gameState, action):
     """
@@ -277,23 +170,9 @@ class ReflexCaptureAgent(CaptureAgent):
     weights = self.getWeights(gameState, action)
     return features * weights
 
-  def getFeatures(self, gameState, action):
-    """
-    Returns a counter of features for the state
-    """
-    features = util.Counter()
-    successor = self.getSuccessor(gameState, action)
-    features['successorScore'] = self.getScore(successor)
-    return features
 
-  def getWeights(self, gameState, action):
-    """
-    Normally, weights do not depend on the gamestate.  They can be either
-    a counter or a dictionary.
-    """
-    return {'successorScore': 1.0}
-
-class OffensiveReflexAgent(ReflexCaptureAgent):
+#Offensive Agent
+class OffInfRefAgent(InferenceReflexAgent):
   """
   A reflex agent that seeks food. This is an agent
   we give you to get an idea of what an offensive agent might look like,
@@ -315,7 +194,7 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
   def getWeights(self, gameState, action):
     return {'successorScore': 100, 'distanceToFood': -1}
 
-class DefensiveReflexAgent(ReflexCaptureAgent):
+class DefInfRefAgent(InferenceReflexAgent):
   """
   A reflex agent that keeps its side Pacman-free. Again,
   this is to give you an idea of what a defensive agent
