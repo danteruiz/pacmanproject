@@ -77,7 +77,6 @@ class InferenceReflexAgent(CaptureAgent):
   def initializeUniformly(self, gameState):
     self.opponents_beliefs = {}
     for index in self.getOpponents(gameState):
-      print "Index: ", index
       beliefs = util.Counter()
       for p in self.legalPositions:
         beliefs[p] = 1.0
@@ -86,7 +85,6 @@ class InferenceReflexAgent(CaptureAgent):
 
   def chooseAction(self, gameState):
     for index in self.getOpponents(gameState):
-      print 'this is the index', index
       if not self.firstMove: self.elapseTime(gameState)
       self.firstMove = False
       self.index_ = index
@@ -173,15 +171,30 @@ class InferenceReflexAgent(CaptureAgent):
 
 #Offensive Agent
 class OffInfRefAgent(InferenceReflexAgent):
-  """
-  A reflex agent that seeks food. This is an agent
-  we give you to get an idea of what an offensive agent might look like,
-  but it is by no means the best or only way to build an offensive agent.
-  """
+  
   def getFeatures(self, gameState, action):
     features = util.Counter()
     successor = self.getSuccessor(gameState, action)
     features['successorScore'] = self.getScore(successor)
+    features['ghostDist'] = 0
+
+    mostLikelyPositions = []
+    for index in self.opponents_beliefs:
+      candidates = []
+      for position, prob in self.opponents_beliefs[index].items():
+        candidates.append((prob, position))
+      maxCandidate = max(candidates)
+      mostLikelyPositions.append(maxCandidate[1])
+    #print "Most likely positions for enemies: ", mostLikelyPositions
+
+    #print "distance between my offense and their defense: ", self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
+    #quit()
+
+    #if self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 5:
+      #print "Too Close!"
+    features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
+    if self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 10:
+      features['ghostDist'] = -(self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]))
 
     # Compute distance to the nearest food
     foodList = self.getFood(successor).asList()
@@ -192,7 +205,7 @@ class OffInfRefAgent(InferenceReflexAgent):
     return features
 
   def getWeights(self, gameState, action):
-    return {'successorScore': 100, 'distanceToFood': -1}
+    return {'successorScore': 100, 'distanceToFood': -1, 'ghostDist': -1}
 
 class DefInfRefAgent(InferenceReflexAgent):
   """
@@ -205,6 +218,7 @@ class DefInfRefAgent(InferenceReflexAgent):
   def getFeatures(self, gameState, action):
     features = util.Counter()
     successor = self.getSuccessor(gameState, action)
+    features['invaderDistance'] = 0
 
     myState = successor.getAgentState(self.index)
     myPos = myState.getPosition()
@@ -213,13 +227,16 @@ class DefInfRefAgent(InferenceReflexAgent):
     features['onDefense'] = 1
     if myState.isPacman: features['onDefense'] = 0
 
-    # Computes distance to invaders we can see
-    enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
-    invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
-    features['numInvaders'] = len(invaders)
-    if len(invaders) > 0:
-      dists = [self.getMazeDistance(myPos, a.getPosition()) for a in invaders]
-      features['invaderDistance'] = min(dists)
+    mostLikelyPositions = []
+    for index in self.opponents_beliefs:
+      candidates = []
+      for position, prob in self.opponents_beliefs[index].items():
+        candidates.append((prob, position))
+      maxCandidate = max(candidates)
+      mostLikelyPositions.append(maxCandidate[1])
+
+    features['invaderDistance'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[0])
+
 
     if action == Directions.STOP: features['stop'] = 1
     rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
