@@ -20,7 +20,7 @@ from util import manhattanDistance
 #################
 
 def createTeam(firstIndex, secondIndex, isRed,
-               first = 'OffInfRefAgent', second = 'DefInfRefAgent'):
+               first = 'OffInfRefAgent', second = 'InferenceReflexAgent'):
   """
   This function should return a list of two agents that will form the
   team, initialized using firstIndex and secondIndex as their agent
@@ -54,6 +54,7 @@ class InferenceReflexAgent(CaptureAgent):
     self.prob_attack = 0.8
     self.prob_scaredFlee = 0.8
     self.index_ = None
+    self.enemy_states = {}
 
   def getPositionDistribution(self, gameState):
     ghostPosition = gameState.getAgentState(self.index_).getPosition() # The position you set
@@ -85,6 +86,9 @@ class InferenceReflexAgent(CaptureAgent):
 
   def chooseAction(self, gameState):
     for index in self.getOpponents(gameState):
+      agent = gameState.getAgentState(index)
+      self.enemy_states[index] = agent
+      #print agent
       if not self.firstMove: self.elapseTime(gameState)
       self.firstMove = False
       self.index_ = index
@@ -168,6 +172,59 @@ class InferenceReflexAgent(CaptureAgent):
     weights = self.getWeights(gameState, action)
     return features * weights
 
+  def getFeatures(self, gameState, action):
+    features = util.Counter()
+    successor = self.getSuccessor(gameState, action)
+    features['invaderDistance'] = 0
+
+    myState = successor.getAgentState(self.index)
+    myPos = myState.getPosition()
+
+    # Computes whether we're on defense (1) or offense (0)
+    features['onDefense'] = 1
+    if myState.isPacman: features['onDefense'] = 0
+
+    invaders = 0
+    min_dist = 1000000
+    for agent_index in self.getOpponents(successor):
+       candidates = []
+       for position, prob in self.opponents_beliefs[agent_index].items():
+         candidates.append((prob, position))
+       maxCandidate = max(candidates)
+       agent = self.enemy_states[agent_index]
+       if not agent.isPacman: continue
+       invaders += 1
+
+
+       if agent.getPosition() != None:
+           features['invaderDistance'] = self.getMazeDistance(myPos,agent.getPosition())
+           if(manhattanDistance(myPos,agent.getPosition()) <= 0.7):
+             self.initializeUniformly(gameState)
+
+       else:
+           features['invaderDistance'] = self.getMazeDistance(myPos,maxCandidate[1])
+
+
+
+       #dists = [self.getMazeDistance(myPos, self.getBeliefsPosition(a)) for a in invaders]
+       #features['invaderDistance'] = min(dists)
+
+    features['numInvaders'] = invaders
+
+    if action == Directions.STOP: features['stop'] = 1
+    rev = Directions.REVERSE[gameState.getAgentState(self.index).configuration.direction]
+    if action == rev: features['reverse'] = 1
+
+    return features
+
+  def getWeights(self, gameState, action):
+    return {'numInvaders': -1000, 'onDefense': 100, 'invaderDistance': -10, 'stop': -100, 'reverse': -2}
+
+
+
+
+
+
 
 #Offensive Agent
 class OffInfRefAgent(CaptureAgent):
@@ -207,7 +264,7 @@ class OffInfRefAgent(CaptureAgent):
     features = self.getFeatures(gameState, action)
     weights = self.getWeights(gameState, action)
     return features * weights
-  
+
   def getFeatures(self, gameState, action):
     features = util.Counter()
     successor = self.getSuccessor(gameState, action)
@@ -215,31 +272,10 @@ class OffInfRefAgent(CaptureAgent):
     features['enemyDistance'] = 0
     features['reverse'] = 0
 
-    #mostLikelyPositions = []
-    #for index in self.opponents_beliefs:
-    #  candidates = []
-    #  for position, prob in self.opponents_beliefs[index].items():
-    #    candidates.append((prob, position))
-    #  maxCandidate = max(candidates)
-    #  mostLikelyPositions.append(maxCandidate[1])
-    #print "Most likely positions for enemies: ", mostLikelyPositions
-
-    #print "distance between my offense and their defense: ", self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
-    #quit()
-
-    #if self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 5:
-      #print "Too Close!"
-    #features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
-    #if manhattanDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1]) <= 3:
-    #  features['ghostDist'] = self.getMazeDistance(successor.getAgentState(self.index).getPosition(), mostLikelyPositions[1])
-
-    # Compute distance to the nearest food
-
     if self.red:
       enemies = gameState.getBlueTeamIndices()
     else:
       enemies = gameState.getRedTeamIndices()
-    #print enemies
 
 
     myPosition = successor.getAgentState(self.index).getPosition()
@@ -249,9 +285,9 @@ class OffInfRefAgent(CaptureAgent):
       enemyDefenseAgentDist = manhattanDistance(myPosition, defensePosition)
     else:
       enemyDefenseAgentDist = successor.getAgentDistances()[enemies[1]]
-    print enemyDefenseAgentDist
+
     if enemyDefenseAgentDist <= 3:
-      print "Too close!"
+      #print "Too close!"
       if successor.getAgentState(enemies[1]).scaredTimer > 0:
         features['enemyDistance'] = -(enemyDefenseAgentDist)
       else:
@@ -266,7 +302,7 @@ class OffInfRefAgent(CaptureAgent):
         minDistance = min([self.getMazeDistance(myPos, food) for food in foodList])
         features['distanceToFood'] = minDistance
 
-    
+
 
     return features
 
@@ -294,10 +330,11 @@ class DefInfRefAgent(InferenceReflexAgent):
     if myState.isPacman: features['onDefense'] = 0
 
     enemies = [successor.getAgentState(i) for i in self.getOpponents(successor)]
+    for i in enemies: print i
     invaders = [a for a in enemies if a.isPacman and a.getPosition() != None]
     features['numInvaders'] = len(invaders)
     if len(invaders) > 0:
-      
+
 
       if self.red:
         enemies = gameState.getBlueTeamIndices()
@@ -315,7 +352,6 @@ class DefInfRefAgent(InferenceReflexAgent):
         enemyDefenseAgentDist = successor.getAgentDistances()[enemies[0]]
       print enemyDefenseAgentDist
       if enemyDefenseAgentDist <= 4:
-        print "Too close!"
         features['invaderDistance'] = enemyDefenseAgentDist
 
     if action == Directions.STOP: features['stop'] = 1
